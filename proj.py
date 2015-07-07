@@ -76,9 +76,11 @@ def fermi_gas_chemical_potential(n, m):
     k = number_density_to_momentum(n)
     return sqrt(m**2 + k**2)
 
+@np.vectorize
 def electron_chemical_potential(n_e):
     return fermi_gas_chemical_potential(n_e, m=M_E)
 
+@np.vectorize
 def muon_chemical_potential(n_e):
     return fermi_gas_chemical_potential(n_e, m=M_MU)
 
@@ -86,20 +88,19 @@ def solve_equation(equation, x0):
     x, _, ier, _ = spo.fsolve(equation, x0=x0, full_output=True)
     return x if ier == 1 else nan       # return NaN if solution not found
 
+def beta_equilibrium_equation(n_n, n_p):
+    return (electron_chemical_potential(n_p)
+            + proton_chemical_potential(n_n, n_p)
+            - neutron_chemical_potential(n_n, n_p))
+
 def solve_for_neutron_number_density(n_p):
-    mu_e = electron_chemical_potential
-    mu_p = proton_chemical_potential
-    mu_n = neutron_chemical_potential
-    equation = lambda n_n: mu_e(n_p) + mu_p(n_n, n_p) - mu_n(n_n, n_p)
+    equation = lambda n_n: beta_equilibrium_equation(n_n, n_p)
     n_n = np.linspace(1e-10, 10 * .16, 250)##
     plt.plot(n_n, equation(n_n))##
     return solve_equation(equation, x0=1.)
 
 def solve_for_proton_number_density(n_n):
-    mu_e = electron_chemical_potential
-    mu_p = proton_chemical_potential
-    mu_n = neutron_chemical_potential
-    equation = lambda n_p: mu_e(n_p) + mu_p(n_n, n_p) - mu_n(n_n, n_p)
+    equation = lambda n_p: beta_equilibrium_equation(n_n, n_p)
     n_p = np.linspace(1e-5, 100 * .16, 250)##
     plt.plot(n_p, [equation(n_p_) for n_p_ in n_p])##
     return solve_equation(equation, x0=1.)
@@ -121,6 +122,22 @@ T_3 = 47.29  # fm**5
 X_0 =   .34  # (dimensionless)
 
 plt.gca().axhline(y=0, color="gray")
+
+# note: it seems that only one of the roots is physical (nonnegative num
+# density) perhaps we should solve n_e and n_p first (resp.) and figure out
+# where they cross the x-axis?
+nvar = np.linspace(1e-5, 4, 100) * .16
+n_n = nvar
+n_p = .07 * .16
+plt.xlabel("n_n")
+plt.plot(n_p, electron_chemical_potential(n_p), label="e")
+plt.plot(nvar/.16, proton_chemical_potential(n_n, n_p), label="p")
+plt.plot(nvar/.16, neutron_chemical_potential(n_n, n_p), label="n")
+plt.plot(nvar/.16, beta_equilibrium_equation(n_n, n_p), label="beta")
+plt.legend()
+plt.show()
+exit()
+
 #n_ps = np.linspace(4, 11, 10)
 #n_ns = [solve_for_neutron_number_density(.16 * n_p) for n_p in n_ps]
 #plt.plot(n_ps, n_ns)

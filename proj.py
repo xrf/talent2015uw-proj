@@ -3,8 +3,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import scipy.integrate as spi
 import scipy.optimize as spo
-from ad    import adnumber
-from numpy import arcsinh, sqrt, pi
+from ad            import adnumber
+from numpy         import arcsinh, sqrt, nan, pi
+
+def cbrt(x):
+    '''Cube root.  Needed to avoid getting complex numbers and also for
+    compatibility with ad (which scipy.special.cbrt is not).'''
+    if x >= 0:
+        return x**(1./3.)
+    return -(-x)**(1./3.)
 
 def pressure(e_pn, e_e, mu_n, mu_p, mu_e, n_n, n_p, n_e):
     return -e_pn - e_e + mu_n * n_n + mu_p * n_p + mu_e * n_e
@@ -28,7 +35,7 @@ def nucleon_kinetic_density(n_n, n_p):
 
 def number_density_to_momentum(n):
     '''Compute the Fermi momentum from the number density for a Fermi gas.'''
-    return (n * (3. * pi**2))**(1./3.)
+    return cbrt(n * (3. * pi**2))
 
 def momentum_to_number_density(k):
     '''Compute the number density from Fermi momentum for a Fermi gas.'''
@@ -52,21 +59,14 @@ def plot_energy_density():
     plt.show()
 
 def vectorize(f):
-    return np.vectorize(f, [float, float])
+    return np.vectorize(f, [float])
 
-def is_iterable(iterable):
-    return hasattr(iterable, "__iter__")
-
-@vectorize
+@np.vectorize
 def proton_chemical_potential(n_n, n_p):
-    # print(n_n, n_p)
-    # if is_iterable(n_n):
-    #     return n_n
-    # if len(n_p): pass
     n_p = adnumber(n_p)
     return nucleon_energy_density(n_n, n_p).d(n_p)
 
-@vectorize
+@np.vectorize
 def neutron_chemical_potential(n_n, n_p):
     n_n = adnumber(n_n)
     return nucleon_energy_density(n_n, n_p).d(n_n)
@@ -82,13 +82,27 @@ def electron_chemical_potential(n_e):
 def muon_chemical_potential(n_e):
     return fermi_gas_chemical_potential(n_e, m=M_MU)
 
-def solve_for_neutron_number_density(n_e):
-    n_p = n_e
+def solve_equation(equation, x0):
+    x, _, ier, _ = spo.fsolve(equation, x0=x0, full_output=True)
+    return x if ier == 1 else nan       # return NaN if solution not found
+
+def solve_for_neutron_number_density(n_p):
     mu_e = electron_chemical_potential
     mu_p = proton_chemical_potential
     mu_n = neutron_chemical_potential
-    equation = lambda n_n: mu_e(n_e) + mu_p(n_n, n_p) - mu_n(n_n, n_p)
-    return spo.fsolve(equation, x0=1.)
+    equation = lambda n_n: mu_e(n_p) + mu_p(n_n, n_p) - mu_n(n_n, n_p)
+    n_n = np.linspace(1e-10, 10 * .16, 250)##
+    plt.plot(n_n, equation(n_n))##
+    return solve_equation(equation, x0=1.)
+
+def solve_for_proton_number_density(n_n):
+    mu_e = electron_chemical_potential
+    mu_p = proton_chemical_potential
+    mu_n = neutron_chemical_potential
+    equation = lambda n_p: mu_e(n_p) + mu_p(n_n, n_p) - mu_n(n_n, n_p)
+    n_p = np.linspace(1e-5, 100 * .16, 250)##
+    plt.plot(n_p, [equation(n_p_) for n_p_ in n_p])##
+    return solve_equation(equation, x0=1.)
 
 # note: energy-like quantities are in units of 1/fm, equivalent to 197.33 MeV
 MEV_FM = 197.33
@@ -106,9 +120,16 @@ T_2 =  -.137 # fm**4
 T_3 = 47.29  # fm**5
 X_0 =   .34  # (dimensionless)
 
-print(solve_for_neutron_number_density(.16))
+plt.gca().axhline(y=0, color="gray")
+#n_ps = np.linspace(4, 11, 10)
+#n_ns = [solve_for_neutron_number_density(.16 * n_p) for n_p in n_ps]
+#plt.plot(n_ps, n_ns)
+n_ns = np.linspace(1, 21, 10)
+n_ps = [solve_for_proton_number_density(.16 * n_n) for n_n in n_ns]
+# plt.plot(n_ps, n_ns)
+plt.show()
 
-STOP
+exit()
 
 def energy_density_gas(mu, mass):
     b = sqrt(mu**2 - mass**2)

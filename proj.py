@@ -13,15 +13,17 @@ def cbrt(x):
         return x**(1./3.)
     return -(-x)**(1./3.)
 
-def total_pressure(n_n):
-    n_e = n_p
+@np.vectorize
+def total_energy_density_and_pressure(n_n):
     n_p = solve_for_proton_number_density(n_n)
+    n_e = n_p
     epsilon_np = nucleon_energy_density(n_n, n_p)
     epsilon_e  = electron_energy_density(n_e)
+    epsilon    = epsilon_np + epsilon_e
     mu_n = proton_chemical_potential(n_n, n_p)
     mu_p = neutron_chemical_potential(n_n, n_p)
     mu_e = electron_chemical_potential(n_e)
-    return mu_n * n_n + mu_p * n_p + mu_e * n_e - epsilon_np - epsilon_e
+    return (epsilon, mu_n * n_n + mu_p * n_p + mu_e * n_e - epsilon)
 
 def nucleon_interaction_density(n_n, n_p):
     '''[V_np] Interaction using mean-field Skyrme model.  Eq (28)'''
@@ -77,7 +79,7 @@ def neutron_chemical_potential(n_n, n_p):
 
 def ideal_fermi_gas_energy_density(k, m):
     '''Energy density of an ideal Fermi gas.'''
-    mu = fermi_gas_chemical_potential(k, m)
+    mu = ideal_fermi_gas_chemical_potential(k, m)
     return (k * mu * (k**2 + mu**2) - m**4 * arcsinh(k / m)) / (8. * pi**2)
 
 def ideal_fermi_gas_chemical_potential(k, m):
@@ -87,16 +89,11 @@ def ideal_fermi_gas_chemical_potential(k, m):
 def make_ideal_fermi_gas(m):
     def epsilon(n):
         k = number_density_to_momentum(n)
-        return fermi_gas_energy_density(k, m)
+        return ideal_fermi_gas_energy_density(k, m)
     def mu(n):
         k = number_density_to_momentum(n)
-        return fermi_gas_chemical_potential(k, m)
+        return ideal_fermi_gas_chemical_potential(k, m)
     return epsilon, mu
-
-electron_energy_density, electron_chemical_potential \
-    = make_ideal_fermi_gas(M_E)
-muon_energy_density, muon_chemical_potential \
-    = make_ideal_fermi_gas(M_MU)
 
 def solve_equation(equation, **kwargs):
     x, _, ier, _ = spo.fsolve(equation, full_output=True, **kwargs)
@@ -135,6 +132,11 @@ T_2 =  -.137 # fm**4
 T_3 = 47.29  # fm**5
 X_0 =   .34  # (dimensionless)
 
+electron_energy_density, electron_chemical_potential \
+    = make_ideal_fermi_gas(M_E)
+muon_energy_density, muon_chemical_potential \
+    = make_ideal_fermi_gas(M_MU)
+
 def create_figure(nx=1, ny=1):
     figure = plt.figure()
     axes = [figure.add_subplot(nx, ny, i + 1) for i in range(nx * ny)]
@@ -170,59 +172,22 @@ def plot_beta_equilibrium_solutions():
     img = plot_against_number_densities(fig, ax2, beta_equilibrium_equation)
     fig.colorbar(img)
 
-fig, [ax] = create_figure(1, 1)
-n_ns = np.linspace(1e-5, 6)
-n_ps = [solve_for_proton_number_density(N_0 * n_n) / N_0 for n_n in n_ns]
-ax.plot(n_ns, n_ps, "x")
-ax.set_xlabel("n_n")
-ax.set_ylabel("n_p")
+# fig, [ax] = create_figure()
+# n_ns = np.linspace(1e-5, 6)
+# n_ps = [solve_for_proton_number_density(N_0 * n_n) / N_0 for n_n in n_ns]
+# ax.plot(n_ns, n_ps, "x")
+# ax.set_xlabel("n_n")
+# ax.set_ylabel("n_p")
+
+fig, [ax] = create_figure()
+n_n = np.linspace(1e-12, .16, 200)
+epsilon, p = total_energy_density_and_pressure(n_n)
+ax.plot(epsilon, p, "x")
+ax.set_xlabel("epsilon")
+ax.set_ylabel("p")
+
 plt.show()
 exit()
 
-def equation_of_state(fermi_momentum):
-    '''Calculate the equation of state of an electrically neutral Fermi gas of
-    electrons, neutrons, and protons in beta-equilibrium with the given Fermi
-    momentum of electrons (which is the same for protons since n_e = n_p).'''
-    mu_e = chemical_potential(M_E, fermi_momentum)
-    mu_p = chemical_potentialenergy(M_P, fermi_momentum)
-    mu_n = mu_e + mu_p
-    P = pressure(mu_n, M_N) + pressure(mu_p, M_P) + pressure(mu_e, M_E)
-    epsilon = (energy_density(mu_n, M_N) +
-               energy_density(mu_p, M_P) +
-               energy_density(mu_e, M_E))
-    n_e = number_density(mu_e, M_E)
-    n_n = number_density(mu_n, M_N)
-    n_p = number_density(mu_p, M_P)
-    return {
-        "mu_p": mu_p,
-        "mu_n": mu_n,
-        "n_e": n_e,
-        "n_n": n_n,
-        "n_p": n_p,
-        "epsilon": epsilon,
-        "P": P,
-    }
-
-def solve_k_F(P):
-    '''Find the Fermi momentum that matches the given pressure'''
-    return spo.fsolve(lambda k_F: equation_of_state(k_F)["P"] - P, x0=0.8)
-
-def equation_of_state_by_pressure(pressure):
-    '''Calculate the equation of state by total pressure.'''
-    return equation_of_state(solve_k_F(pressure))
-
-kF1 = 0.01
-k_F_range = np.concatenate([np.linspace(0, kF1, 400), np.linspace(kF1, 100, 100)])
-df = pd.DataFrame.from_records(equation_of_state(k_F) for k_F in k_F_range)
-#n = n_n + n_p
-
-plt.plot(df["mu_n"] * MEV_FM, df["n_p"] / (df["n_p"] + np.nan_to_num(df["n_n"])))
-# against baryon density (?)
-#plt.plot(df["n_p"] + df["n_n"], df["n_p"] / (df["n_p"] + np.nan_to_num(df["n_n"])))
-plt.ylim(0, 1.1)
-plt.ylabel("n_p / n_baryon")
-
-#plt.plot(df["mu_n"] * MEV_FM, df["n_p"])
-#plt.plot(df["mu_n"] * MEV_FM, np.nan_to_num(df["n_n"]))
-plt.xlabel("mu_p  /MeV")
-plt.show()
+# ~0 to 3e3MeV/fm^3
+# epsilon pressure

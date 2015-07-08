@@ -66,7 +66,7 @@ def twinplot(x1, y1, x2, y2, fmt1="r-", fmt2="b-",
         tl.set_color(color2)
 
 # ----------------------------------------------------------------------------
-# physics
+# thermodynamics
 # ----------------------------------------------------------------------------
 
 def number_density_to_momentum(n):
@@ -160,6 +160,50 @@ def solve_for_proton_number_density(n_n):
         return N_EMPTY
     return n_p
 
+def neutron_density_at_pressure(p, guess):
+    '''Find the neutron number density at the given pressure.'''
+    equation = lambda n_n: total_energy_density_and_pressure(n_n)[1] - p
+    logging.info("solving for neutron number density at " +
+                 "pressure = {0}/fm**3...".format(p))
+    n_n = solve_equation(equation, x0=guess)[0]
+    logging.info("  neutron number density = {0}/fm**3".format(n_n))
+    return n_n
+
+def neutron_density_at_zero_pressure():
+    '''Find the positive neutron number density at zero pressure.'''
+    N_N_AT_P_ZERO_GUESS = .42
+    return neutron_density_at_pressure(0., N_N_AT_P_ZERO_GUESS)
+
+def get_eos_table(n_n_begin, n_n_mid, n_n_end):
+    try:
+        return np.loadtxt("eos.txt").transpose() / HBAR_C
+    except IOError:
+        logging.info("regenerating EOS table...")
+        pass
+    n_n = np.concatenate([
+        np.linspace(N_BEGIN, N_MID, 50),
+        np.logspace(log10(N_MID), log10(N_END), 200),
+    ])
+    epsilon, p = total_energy_density_and_pressure(n_n)
+    epsilon_p = np.array([epsilon, p]).transpose()
+    np.savetxt("eos.txt", epsilon_p * HBAR_C)
+    return epsilon_p.transpose()
+
+def interpolate_eos(epsilon, p):
+    eos_raw = scipy.interpolate.interp1d(p, epsilon)
+    @np.vectorize
+    def eos(p):
+        # if p < 0:
+        #     return 0.
+        p = np.max([0, p]) / P_CONV
+        try:
+            return eos_raw(p) * P_CONV
+        except:
+            logging.error("failed to evaluate EOS at " +
+                          "pressure = {0} hbar c / fm^4".format(p))
+            raise
+    return eos
+
 def plot_energy_density():
     '''Plot the energy density per nucleon for symmetric nuclear matter and
     pure neutron matter'''
@@ -194,71 +238,40 @@ def plot_beta_equilibrium_solutions(n_n_max, n_p_max):
                                         n_n_max, n_p_max)
     fig.colorbar(img)
 
-def get_eos_table(n_n):
-    try:
-        return np.loadtxt("eos.txt").transpose() / HBAR_C
-    except IOError:
-        logging.info("regenerating EOS table...")
-        pass
-    epsilon, p = total_energy_density_and_pressure(n_n)
-    epsilon_p = np.array([epsilon, p]).transpose()
-    np.savetxt("eos.txt", epsilon_p * HBAR_C)
-    return epsilon_p.transpose()
+def plot_proton_number_density_solutions():
+    fig, [ax] = create_figure()
+    n_ns = np.linspace(N_EMPTY, 4)
+    n_ps = [solve_for_proton_number_density(N_0 * n_n) / N_0 for n_n in n_ns]
+    ax.plot(n_ns, n_ps, "x")
+    ax.set_xlabel("n_n")
+    ax.set_ylabel("n_p")
 
-def neutron_density_at_pressure(p, guess):
-    '''Find the neutron number density at the given pressure.'''
-    equation = lambda n_n: total_energy_density_and_pressure(n_n)[1] - p
-    logging.info("solving for neutron number density at " +
-                 "pressure = {0}/fm**3...".format(p))
-    n_n = solve_equation(equation, x0=guess)[0]
-    logging.info("  neutron number density = {0}/fm**3".format(n_n))
-    return n_n
-
-def neutron_density_at_zero_pressure():
-    '''Find the positive neutron number density at zero pressure.'''
-    N_N_AT_P_ZERO_GUESS = .42
-    return neutron_density_at_pressure(0., N_N_AT_P_ZERO_GUESS)
+def plot_eos(epsilon, p, eos):
+    p2 = np.logspace(-2, log10(np.max(p) - 1), 2000)
+    fig, [ax] = create_figure()
+    ax.loglog(p, epsilon, "x", label="data")
+    ax.loglog(p2, eos(p2 * P_CONV) / P_CONV, "r", label="interpolation")
+    ax.set_xlabel("p /(hbar c / fm^4)")
+    ax.set_ylabel("epsilon /(hbar c / fm^4)")
+    ax.legend()
 
 # ----------------------------------------------------------------------------
-# Constants
+# gravity
 # ----------------------------------------------------------------------------
+# this part uses solar mass units:
+#   - pressure or energy density units: c^8 / (M_solar^2 G^3)
+#   - mass units: M_solar
+#   - length units: G M_solar / c^2
 
-HBAR_C = 197.326972    # [MeV*fm]
-M_E  =    .51 / HBAR_C # [hbar/(fm*c)] (mass of an electron)
-M_P  = 938.27 / HBAR_C # [hbar/(fm*c)] (mass of a proton)
-M_N  = 939.56 / HBAR_C # [hbar/(fm*c)] (mass of a neutron)
-M_MU = 105.66 / HBAR_C # [hbar/(fm*c)] (mass of a muon)
-N_0  =    .16          # [1/fm**3]     (nuclear saturation density)
-
-R_HSSOL = 1.47703573   # [km]          (half of solar Schwarzschild radius)
-M_SOLAR = 5.654591e57  # [hbar/(fm*c)] (mass of the Sun)
-
-N_EMPTY = 1e-10        # [1/fm**3] ("zero" number density to avoid div by zero)
-
-E_CONV = 1e54 * R_HSSOL**3 / M_SOLAR
-
-#p/(c**8/(M_solar**2*G**3))
-#p/(hbar*c/fm^4)
-#/M_SOLAR    --> p/(M_solar*c**2/fm^3)
-#*R_HSSOL**3 --> p*1e-54/(c**8/(M_solar**2*G**3))
-#*1e54       --> p/(c**8/(M_solar**2*G**3))
-
-#M_solar*fm*c/hbar = 5.65e57
-#G/km/c**2*M_solar = 1.477
-
-# constants for the Skyrme interaction
-T_0 = -5.93  # [fm**2]
-T_1 =  2.97  # [fm**4]
-T_2 =  -.137 # [fm**4]
-T_3 = 47.29  # [fm**5]
-X_0 =   .34  # [dimensionless]
-
-electron_energy_density, electron_chemical_potential \
-    = make_ideal_fermi_gas(M_E)
-muon_energy_density, muon_chemical_potential \
-    = make_ideal_fermi_gas(M_MU)
-
-# ----------------------------------------------------------------------------
+@np.vectorize
+def simple_eos(p):
+    '''A simple equation of state for noninteracting matter
+    (from tov.ipynb by Michael Forbes).'''
+    anr = 4.27675893
+    ar  = 2.84265221
+    p = np.max([p / P_CONV / 1e3 * HBAR_C, 1e-9])
+    epsilon = (anr * p**(3./5.) + ar * p) * 1e3 / HBAR_C * P_CONV
+    return epsilon
 
 def tov_equation(mp, r, eos):
     '''The Tolman-Oppenheimer-Volkoff equation, which describes the hydrostatic
@@ -295,14 +308,57 @@ def mass_radius(rs, p0, eos):
     edge = indices[0]
     return ms[edge], rs[edge]
 
-def simple_eos(p):
-    '''A simple equation of state for noninteracting matter
-    (from tov.ipynb by Michael Forbes).'''
-    anr = 4.27675893
-    ar  = 2.84265221
-    p = np.max([p / E_CONV / 1e3 * HBAR_C, 1e-9])
-    epsilon = (anr * p**(3./5.) + ar * p) * 1e3 / HBAR_C * E_CONV
-    return epsilon
+def plot_mass_presure_profile(r, m, p):
+    twinplot(
+        r * R_HSSOL, m,
+        r * R_HSSOL, p,
+        xlabel="radius /km",
+        ylabel1="m(r) /M_solar",
+        ylabel2="p(r) /(M_solar/km**3)",
+        ymin1=0, ymin2=0,
+    )
+
+def plot_mass_radius(R, M):
+    fig, [ax] = create_figure()
+    ax.plot(R * R_HSSOL, M, "-x")
+    ax.set_xlabel("R /km")
+    ax.set_ylabel("M /M_solar")
+
+# ----------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------
+
+HBAR_C = 197.326972    # [MeV*fm]
+M_E  =    .51 / HBAR_C # [hbar/(fm*c)] (mass of an electron)
+M_P  = 938.27 / HBAR_C # [hbar/(fm*c)] (mass of a proton)
+M_N  = 939.56 / HBAR_C # [hbar/(fm*c)] (mass of a neutron)
+M_MU = 105.66 / HBAR_C # [hbar/(fm*c)] (mass of a muon)
+N_0  =    .16          # [1/fm**3]     (nuclear saturation density)
+
+R_HSSOL = 1.47703573   # [km]          (half of solar Schwarzschild radius)
+M_SOLAR = 5.654591e57  # [hbar/(fm*c)] (mass of the Sun)
+
+N_EMPTY = 1e-10        # [1/fm**3] ("zero" number density to avoid div by zero)
+
+# conversion factor from femtometer units to solar mass units
+P_CONV = 1e54 * R_HSSOL**3 / M_SOLAR
+
+# convert GeV/fm^3 to solar mass units
+GEV_FM3 = P_CONV * 1e3 / HBAR_C
+
+# constants for the Skyrme interaction
+T_0 = -5.93  # [fm**2]
+T_1 =  2.97  # [fm**4]
+T_2 =  -.137 # [fm**4]
+T_3 = 47.29  # [fm**5]
+X_0 =   .34  # [dimensionless]
+
+electron_energy_density, electron_chemical_potential = \
+    make_ideal_fermi_gas(M_E)
+muon_energy_density, muon_chemical_potential = \
+    make_ideal_fermi_gas(M_MU)
+
+# ----------------------------------------------------------------------------
 
 def main():
     logging.basicConfig(
@@ -310,69 +366,43 @@ def main():
         level=logging.INFO,
     )
 
+    # --- units: femtometers ---
+
     #plot_beta_equilibrium_solutions(4*N_0, .5*N_0)
 
-    # fig, [ax] = create_figure()
-    # n_ns = np.linspace(N_EMPTY, 4)
-    # n_ps = [solve_for_proton_number_density(N_0 * n_n) / N_0 for n_n in n_ns]
-    # ax.plot(n_ns, n_ps, "x")
-    # ax.set_xlabel("n_n")
-    # ax.set_ylabel("n_p")
+    #plot_proton_number_density_solutions()
 
-    N_BEGIN = neutron_density_at_zero_pressure() - 1e-10
-    N_MID = 4 * N_0
-    N_END = neutron_density_at_pressure(1e10, 1e3)
-    n_n = np.concatenate([
-        np.linspace(N_BEGIN, N_MID, 50),
-        np.logspace(log10(N_MID), log10(N_END), 200),
-    ])
-    epsilon, p = get_eos_table(n_n)
+    epsilon, p = get_eos_table(
+        n_n_begin=neutron_density_at_zero_pressure() - 1e-10,
+        n_n_mid=4 * N_0,
+        n_n_end=neutron_density_at_pressure(1e10, 1e3),
+    )
 
-    eos_raw = scipy.interpolate.interp1d(p, epsilon)
-    @np.vectorize
-    def eos(p):
-        # if p < 0:
-        #     return 0.
-        p = np.max([0, p]) / E_CONV
-        try:
-            return eos_raw(p) * E_CONV
-        except:
-            logging.error("failed to evaluate EOS at " +
-                          "pressure = {0}hbar*c/fm**4".format(p))
-            raise
+    eos = interpolate_eos(epsilon, p)
 
-    p2 = np.logspace(-2, log10(np.max(p) - 1), 2000)
-    fig, [ax] = create_figure()
-    ax.loglog(p, epsilon, "x", label="data")
-    ax.loglog(p2, eos(p2 * E_CONV) / E_CONV, "r", label="interpolation")
-    ax.set_xlabel("p")
-    ax.set_ylabel("epsilon")
-    ax.legend()
+    plot_eos(epsilon, p, eos)
 
-    # everything from here on are in units of Solar mass with G = 1, c = 1
-    r_min = .002 #1e-10
-    r_max = 30
-    rs = np.linspace(r_min, r_max, 1000)
+    # --- units: solar mass ---
 
-    p0 = 0.000577584265178 # 0.2GeV/fm^3
-    ms, ps = mass_pressure_profile(rs, p0, eos)
-    twinplot(rs * R_HSSOL, ms,
-             rs * R_HSSOL, ps,
-             xlabel="radius /km",
-             ylabel1="m(r) /M_solar",
-             ylabel2="p(r) /(M_solar/km**3)",
-             ymin1=0, ymin2=0)
+    r = np.linspace(
+        1e-4, # km
+        45,   # km
+        1000,
+    ) / R_HSSOL
 
-    #p0s = np.logspace(-6, 6, 200) * 1e3 / HBAR_C * E_CONV
-    p0s = np.logspace(-3, 3) * 1e3 / HBAR_C * E_CONV
-    Ms, Rs = np.array([mass_radius(rs, p0, eos) for p0 in p0s]).transpose()
+    p0 = 0.2 * GEV_FM3
+    m, p = mass_pressure_profile(r, p0, eos)
+    plot_mass_presure_profile(r, m, p)
 
-    fig, [ax] = create_figure()
-    ax.plot(Rs * R_HSSOL, Ms, "-x")
-    ax.set_xlabel("R /km")
-    ax.set_ylabel("M /M_solar")
+    p0s = np.logspace(
+        -3, # GeV/fm^3
+        3,  # GeV/fm^3
+    ) * GEV_FM3
+    M, R = np.array([mass_radius(r, p0, eos) for p0 in p0s]).transpose()
+
+    plot_mass_radius(R, M)
 
     plt.show()
 
-if "run" in sys.argv[1:]:
+if __name__ == "__main__":
     main()

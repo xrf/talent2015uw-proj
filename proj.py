@@ -2,10 +2,11 @@
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.integrate as spi
-import scipy.optimize as spo
+import scipy.integrate
+import scipy.interpolate
+import scipy.optimize
 from ad import adnumber                 # for automatic differentation
-from numpy import abs, arcsinh, sqrt, min, max, nan, pi
+from numpy import abs, arcsinh, log, min, max, nan, pi, sqrt
 
 # ----------------------------------------------------------------------------
 # math
@@ -19,7 +20,7 @@ def cbrt(x):
     return -(-x)**(1./3.)
 
 def solve_equation(equation, **kwargs):
-    x, _, ier, _ = spo.fsolve(equation, full_output=True, **kwargs)
+    x, _, ier, _ = scipy.optimize.fsolve(equation, full_output=True, **kwargs)
     return x if ier == 1 else nan       # return NaN if solution not found
 
 def solve_equation_within(equation, xmin, xmax, attempts, **kwargs):
@@ -45,6 +46,24 @@ def plot_map(figure, axes, func, xmin, xmax, ymin, ymax,
     zs = func(xs, ys)
     return axes.imshow(zs, origin="lower",
                        extent=(xmin, xmax, ymin, ymax), **kwargs)
+
+def twinplot(x1, y1, x2, y2, fmt1="r-", fmt2="b-",
+             color1="r", color2="b", xlabel="", ylabel1="", ylabel2="",
+             ymin1=None, ymax1=None, ymin2=None, ymax2=None):
+    '''Plot two curves on the same plot but with differing y-scales.'''
+    fig, ax1 = plt.subplots()
+    ax1.plot(x1, y1, fmt1)
+    ax1.set_xlabel(xlabel)
+    ax1.set_ylabel(ylabel1, color=color1)
+    ax1.set_ylim(ymin1, ymax1)
+    for tl in ax1.get_yticklabels():
+        tl.set_color(color1)
+    ax2 = ax1.twinx()
+    ax2.plot(x2, y2, fmt2)
+    ax2.set_ylabel(ylabel2, color=color2)
+    ax2.set_ylim(ymin2, ymax2)
+    for tl in ax2.get_yticklabels():
+        tl.set_color(color2)
 
 # ----------------------------------------------------------------------------
 # physics
@@ -98,7 +117,8 @@ def nucleon_kinetic_density(n_n, n_p):
 def nucleon_energy_density(n_n, n_p):
     '''Energy density for nucleons.  Eq (23)'''
     return (nucleon_kinetic_density(n_n, n_p)
-            + nucleon_interaction_density(n_n, n_p))
+            + nucleon_interaction_density(n_n, n_p)
+            + n_n * M_N + n_p * M_P)
 
 @np.vectorize
 def proton_chemical_potential(n_n, n_p):
@@ -176,27 +196,31 @@ def plot_beta_equilibrium_solutions(n_n_max, n_p_max):
                                         n_n_max, n_p_max)
     fig.colorbar(img)
 
-def eos_table(n_n_min, n_n_max, num):
-    n_n = np.linspace(n_n_min, n_n_max, num)
+def get_eos_table(n_n):
+    try:
+        return np.loadtxt("eos.txt").transpose() / MEV_FM
+    except IOError:
+        print("regenerating EOS table...")
+        pass
     epsilon, p = total_energy_density_and_pressure(n_n)
-    return epsilon, p
-
-def print_eos_table(epsilons, ps):
-    for epsilon, p in zip(epsilons, ps):
-        print(epsilon, p)
+    epsilon_p = np.array([epsilon, p]).transpose()
+    np.savetxt("eos.txt", np.concatenate([[0, 0], epsilon_p]) * MEV_FM)
+    return epsilon_p.transpose()
 
 # ----------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------
 
 # note: energy-like quantities are in units of 1/fm, equivalent to 197.33 MeV
-MEV_FM = 197.33
+MEV_FM = 197.326972                     # hbar c /(MeV fm)
 
+G = 2.61210003e-40     # gravitational constant /(fm^2 c^3/hbar)
 M_E  =    .51 / MEV_FM # 1/fm    (mass of an electron)
 M_P  = 938.27 / MEV_FM # 1/fm    (mass of a proton)
 M_N  = 939.56 / MEV_FM # 1/fm    (mass of a neutron)
 M_MU = 105.66 / MEV_FM # 1/fm    (mass of a muon)
 N_0  =    .16          # 1/fm**3 (nuclear saturation density)
+A_Z  = 2               # A/Z ratio
 
 N_EMPTY = 1e-10               # "zero" number density (to avoid singularities)
 
@@ -214,6 +238,37 @@ muon_energy_density, muon_chemical_potential \
 
 # ----------------------------------------------------------------------------
 
+def hydrostatic_equation(mp, r, eos):
+    [m, p] = mp
+    epsilon = eos(p)
+    print(r, epsilon, m)
+    deriv_m = 4. * pi * r**2 * epsilon
+    deriv_p = (
+        -G * m * epsilon / r**2
+        * (1. + p / epsilon)
+        * (1. + 4. * pi * r**3 * p / m)
+        / (1. - 2. * G * m / r)
+    )
+    return [deriv_m, deriv_p]
+
+def mass_pressure_profile(rs, m0, p0, eos):
+    return scipy.integrate.odeint(
+        hydrostatic_equation,
+        [m0, p0],
+        rs,
+        args=(eos,),
+    ).transpose()
+
+def white_dwarf_mass_radius(rs, m0, p0, eos):
+    ms, ps = mass_pressure_profile(rs, m0=m0, p0=p0, eos=eos)
+    indices = np.where(ps <= 0)[0]
+    if not len(indices):
+        return nan, nan
+    edge = indices[0]
+#    print("LL",edge, np.where(ps <= 0))
+    print( edge, ms[edge], rs[edge])
+    return ms[edge], rs[edge]
+
 def main():
 
     #plot_beta_equilibrium_solutions(4*N_0, .5*N_0)
@@ -225,15 +280,45 @@ def main():
     # ax.set_xlabel("n_n")
     # ax.set_ylabel("n_p")
 
-    fig, [ax] = create_figure()
+    N_MID = 4 * N_0
     N_END = 10 * N_0
-    epsilon, p = eos_table(N_EMPTY, N_END, 400)
-    print_eos_table(epsilon * MEV_FM, p * MEV_FM)
-    ax.plot(epsilon, p, "x")
-    ax.set_xlabel("epsilon")
-    ax.set_ylabel("p")
+    n_n = np.concatenate([
+        np.linspace(N_EMPTY, N_MID, 100),
+        np.linspace(N_MID, N_END, 50),
+    ])
+    epsilon, p = get_eos_table(n_n)
+
+    # fig, [ax] = create_figure()
+    # ax.plot(epsilon, p, "x")
+    # ax.set_xlabel("epsilon")
+    # ax.set_ylabel("p")
+
+    p0 = 1e-8
+    m0 = 1e-8
+    r_min = 1e-10 * 1e18
+    r_max = 2e22
+    rs = np.linspace(r_min, r_max, 100)
+
+    eos_raw = scipy.interpolate.interp1d(p, epsilon)
+    def eos(p):
+        if p < 0:
+            return 1e-99
+        return eos_raw(p)
+    print(np.min(p), np.max(p))
+
+    ms, ps = mass_pressure_profile(rs, m0, p0, eos)
+    twinplot(rs, ms, rs, ps, xlabel="radius", ylabel1="m", ylabel2="p",
+             ymin1=0, ymin2=0)
 
     plt.show()
 
+    # p0s = np.linspace(1, 1e10 / MEV_FM, 100)
+    # ms, rs = zip(*(white_dwarf_mass_radius(rs, p0, eos) for p0 in p0s))
+    # for m, r in zip(ms, rs):
+    #     print(m, r)
+
+    # plt.plot(rs, ms, "x")
+
 if "run" in sys.argv[1:]:
     main()
+    exit()

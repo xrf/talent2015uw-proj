@@ -164,9 +164,9 @@ def neutron_density_at_pressure(p, guess):
     '''Find the neutron number density at the given pressure.'''
     equation = lambda n_n: total_energy_density_and_pressure(n_n)[1] - p
     logging.info("solving for neutron number density at " +
-                 "pressure = {0}/fm**3...".format(p))
+                 "pressure = {0} / fm^3 ...".format(p))
     n_n = solve_equation(equation, x0=guess)[0]
-    logging.info("  neutron number density = {0}/fm**3".format(n_n))
+    logging.info("  neutron number density = {0} / fm^3".format(n_n))
     return n_n
 
 def neutron_density_at_zero_pressure():
@@ -178,7 +178,7 @@ def get_eos_table(n_n_begin, n_n_mid, n_n_end):
     try:
         return np.loadtxt("eos.txt").transpose() / HBAR_C
     except IOError:
-        logging.info("regenerating EOS table...")
+        logging.info("regenerating EOS table ...")
         pass
     n_n = np.concatenate([
         np.linspace(n_n_begin, n_n_mid, 50),
@@ -216,7 +216,7 @@ def plot_energy_density():
     plt.show()
 
 def plot_against_number_densities(figure, axes, func, n_n_max, n_p_max):
-    '''Plot a function of (n_n, n_p) where number densities are in 1/fm**3.'''
+    '''Plot a function of (n_n, n_p) where number densities are in 1 / fm^3.'''
     def f(n_n, n_p):
         return abs(func(n_n * N_0, n_p * N_0))
     img = plot_map(figure, axes, f,
@@ -400,7 +400,7 @@ def main():
     plot_mass_pressure_profile(r, m, p)
 
     p0s = np.logspace(
-        -6, # GeV/fm^3
+        -4, # GeV/fm^3
         3,  # GeV/fm^3
     ) * GEV_FM3
     M, R = np.array([mass_radius(r, p0, eos) for p0 in p0s]).transpose()

@@ -137,8 +137,8 @@ def total_energy_density_and_pressure(n_n):
     epsilon_np = nucleon_energy_density(n_n, n_p)
     epsilon_e  = electron_energy_density(n_e)
     epsilon    = epsilon_np + epsilon_e
-    mu_n = proton_chemical_potential(n_n, n_p)
-    mu_p = neutron_chemical_potential(n_n, n_p)
+    mu_n = neutron_chemical_potential(n_n, n_p)
+    mu_p = proton_chemical_potential(n_n, n_p)
     mu_e = electron_chemical_potential(n_e)
     return (epsilon, mu_n * n_n + mu_p * n_p + mu_e * n_e - epsilon)
 

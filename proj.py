@@ -98,25 +98,25 @@ def make_ideal_fermi_gas(m):
     return epsilon, mu
 
 def nucleon_interaction_density(n_n, n_p):
-    '''[V_np] Interaction using mean-field Skyrme model.  Eq (28)'''
+    '''[V_np] Interaction density using mean-field Skyrme model.  Eq (28)'''
     k_n = number_density_to_momentum(n_n)
     k_p = number_density_to_momentum(n_p)
     n_B = n_n + n_p
-    return (.5 * T_0 * ((.5 * X_0 + 1.) * n_B * n_B
+    return (.5 * T_0 * ((.5 * X_0 + 1.) * n_B**2
                         - (X_0 + .5) * (n_p**2 + n_n**2))
             + .15  * (T_1 + T_2) * n_B * (n_n * k_n**2 + n_p * k_p**2)
             + .075 * (T_2 - T_1) * ((n_n * k_n)**2 + (n_p * k_p)**2)
             + .25  * T_3 * n_B * n_n * n_p)
 
-def nucleon_kinetic_density(n_n, n_p):
-    '''[T_np] Nuclear kinetic energy density.  Eq (23)'''
-    k_n = number_density_to_momentum(n_n)
-    k_p = number_density_to_momentum(n_p)
-    return .3 * (k_n**2 * n_n / M_N + k_p**2 * n_p / M_P)
+def nonrelativistic_kinetic_density(n, m):
+    '''Nonrelativistic kinetic energy density.  Eq (23)'''
+    k = number_density_to_momentum(n)
+    return .3 * k**2 * n / m
 
 def nucleon_energy_density(n_n, n_p):
     '''Energy density for nucleons.  Eq (23)'''
-    return (nucleon_kinetic_density(n_n, n_p)
+    return (nonrelativistic_kinetic_density(n_n, M_N)
+            + nonrelativistic_kinetic_density(n_p, M_P)
             + nucleon_interaction_density(n_n, n_p)
             + n_n * M_N + n_p * M_P)
 
@@ -181,8 +181,8 @@ def get_eos_table(n_n_begin, n_n_mid, n_n_end):
         logging.info("regenerating EOS table...")
         pass
     n_n = np.concatenate([
-        np.linspace(N_BEGIN, N_MID, 50),
-        np.logspace(log10(N_MID), log10(N_END), 200),
+        np.linspace(n_n_begin, n_n_mid, 50),
+        np.logspace(log10(n_n_mid), log10(n_n_end), 200),
     ])
     epsilon, p = total_energy_density_and_pressure(n_n)
     epsilon_p = np.array([epsilon, p]).transpose()
@@ -193,11 +193,10 @@ def interpolate_eos(epsilon, p):
     eos_raw = scipy.interpolate.interp1d(p, epsilon)
     @np.vectorize
     def eos(p):
-        # if p < 0:
-        #     return 0.
-        p = np.max([0, p]) / P_CONV
+        p = np.max([0., p]) / P_CONV
         try:
-            return eos_raw(p) * P_CONV
+            epsilon = eos_raw(p) * P_CONV
+            return epsilon
         except:
             logging.error("failed to evaluate EOS at " +
                           "pressure = {0} hbar c / fm^4".format(p))
@@ -246,13 +245,14 @@ def plot_proton_number_density_solutions():
     ax.set_xlabel("n_n")
     ax.set_ylabel("n_p")
 
-def plot_eos(epsilon, p, eos):
+def plot_eos(ax, epsilon, p, eos):
     p2 = np.logspace(-2, log10(np.max(p) - 1), 2000)
-    fig, [ax] = create_figure()
-    ax.loglog(p, epsilon, "x", label="data")
-    ax.loglog(p2, eos(p2 * P_CONV) / P_CONV, "r", label="interpolation")
+    ax.plot(p, epsilon, "x", label="data")
+    ax.plot(p2, eos(p2 * P_CONV) / P_CONV, "r", label="interpolation")
     ax.set_xlabel("p /(hbar c / fm^4)")
     ax.set_ylabel("epsilon /(hbar c / fm^4)")
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
     ax.legend()
 
 # ----------------------------------------------------------------------------
@@ -300,7 +300,7 @@ def mass_pressure_profile(rs, p0, eos):
 
 def mass_radius(rs, p0, eos):
     ms, ps = mass_pressure_profile(rs, p0=p0, eos=eos)
-    indices = np.where(ps <= 0)[0]
+    indices = np.where(ps <= P_EMPTY)[0]
     if not len(indices):
         logging.warn("can't find edge of star " +
                      "(central_pressure = {0} c^8 / (G^3 M_solar^2))".format(p0))
@@ -308,7 +308,7 @@ def mass_radius(rs, p0, eos):
     edge = indices[0]
     return ms[edge], rs[edge]
 
-def plot_mass_presure_profile(r, m, p):
+def plot_mass_pressure_profile(r, m, p):
     twinplot(
         r * R_HSSOL, m,
         r * R_HSSOL, p,
@@ -339,6 +339,7 @@ R_HSSOL = 1.47703573   # [km]          (half of solar Schwarzschild radius)
 M_SOLAR = 5.654591e57  # [hbar/(fm*c)] (mass of the Sun)
 
 N_EMPTY = 1e-10        # [1/fm**3] ("zero" number density to avoid div by zero)
+P_EMPTY = 1e-9
 
 # conversion factor from femtometer units to solar mass units
 P_CONV = 1e54 * R_HSSOL**3 / M_SOLAR
@@ -380,19 +381,23 @@ def main():
 
     eos = interpolate_eos(epsilon, p)
 
-    plot_eos(epsilon, p, eos)
+    fig, [ax1, ax2] = create_figure(1, 2)
+    plot_eos(ax1, epsilon, p, eos)
+    plot_eos(ax2, epsilon, p, eos)
+    ax1.set_xlim(right=4)
+    ax1.set_ylim(top=6)
 
     # --- units: solar mass ---
 
     r = np.linspace(
         1e-4, # km
-        45,   # km
+        40,   # km
         1000,
     ) / R_HSSOL
 
     p0 = 0.2 * GEV_FM3
     m, p = mass_pressure_profile(r, p0, eos)
-    plot_mass_presure_profile(r, m, p)
+    plot_mass_pressure_profile(r, m, p)
 
     p0s = np.logspace(
         -3, # GeV/fm^3

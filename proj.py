@@ -6,7 +6,7 @@ import scipy.integrate
 import scipy.interpolate
 import scipy.optimize
 from ad import adnumber                 # for automatic differentation
-from numpy import abs, arcsinh, log, log10, nan, pi, sqrt
+from numpy import abs, arcsinh, log10, nan, pi, sqrt
 
 # ----------------------------------------------------------------------------
 # math

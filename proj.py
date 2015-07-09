@@ -222,22 +222,22 @@ def plot_against_number_densities(figure, axes, func, n_n_max, n_p_max):
     img = plot_map(figure, axes, f,
                    xmin=N_EMPTY, xmax=n_n_max / N_0,
                    ymin=N_EMPTY, ymax=n_p_max / N_0,
-                   xnum=100, ynum=100,
                    cmap="afmhot", interpolation="none", vmax=1)
     axes.set_xlabel("n_n /n_0")
     axes.set_ylabel("n_p /n_0")
     return img
 
 def plot_beta_equilibrium_solutions(n_n_max, n_p_max):
-    fig, [ax1, ax2] = create_figure(2, 1)
+    logging.info("plotting beta equilibrium solutions ...")
+    fig, [ax] = create_figure()
     def f(n_n, n_p):
         return neutron_chemical_potential(n_n, n_p) >= 0
-    plot_against_number_densities(fig, ax1, f, n_n_max, n_p_max)
-    img = plot_against_number_densities(fig, ax2, beta_equilibrium_equation,
+    img = plot_against_number_densities(fig, ax, beta_equilibrium_equation,
                                         n_n_max, n_p_max)
     fig.colorbar(img)
 
 def plot_proton_number_density_solutions():
+    logging.info("plotting proton number density solutions ...")
     fig, [ax] = create_figure()
     n_ns = np.linspace(N_EMPTY, 4)
     n_ps = [solve_for_proton_number_density(N_0 * n_n) / N_0 for n_n in n_ns]
@@ -369,9 +369,9 @@ def main():
 
     # --- units: femtometers ---
 
-    #plot_beta_equilibrium_solutions(4*N_0, .5*N_0)
+    plot_beta_equilibrium_solutions(6*N_0, 6*N_0)
 
-    #plot_proton_number_density_solutions()
+    plot_proton_number_density_solutions()
 
     epsilon, p = get_eos_table(
         n_n_begin=neutron_density_at_zero_pressure() - 1e-10,
@@ -400,7 +400,7 @@ def main():
     plot_mass_pressure_profile(r, m, p)
 
     p0s = np.logspace(
-        -3, # GeV/fm^3
+        -6, # GeV/fm^3
         3,  # GeV/fm^3
     ) * GEV_FM3
     M, R = np.array([mass_radius(r, p0, eos) for p0 in p0s]).transpose()

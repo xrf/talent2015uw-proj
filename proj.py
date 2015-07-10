@@ -21,7 +21,7 @@ def cbrt(x):
 
 def solve_equation(equation, **kwargs):
     x, _, ier, _ = scipy.optimize.fsolve(equation, full_output=True, **kwargs)
-    return x if ier == 1 else nan       # return NaN if solution not found
+    return x[0] if ier == 1 else nan    # return NaN if solution not found
 
 def solve_equation_within(equation, xmin, xmax, attempts=10, **kwargs):
     for x0 in np.linspace(xmin, xmax, attempts):
@@ -130,17 +130,67 @@ def neutron_chemical_potential(n_n, n_p):
     n_n = adnumber(n_n)
     return nucleon_energy_density(n_n, n_p).d(n_n)
 
-@np.vectorize
-def total_energy_density_and_pressure(n_n):
-    n_p = solve_for_proton_number_density(n_n)
-    n_e = n_p
+def vectorize(**kwargs):
+    return lambda f: np.vectorize(f, **kwargs)
+
+def plot_muon_solutions(equation):
+    def f(n_p, n_e):
+        return sum(abs(equation([n_p * N_0, n_e * N_0])))
+    fig, [ax] = create_figure()
+    img = plot_map(fig, ax, f,
+                   xmin=N_EMPTY, xmax=40.,
+                   ymin=N_EMPTY, ymax=40.,
+                   cmap="afmhot", interpolation="none")
+    fig.colorbar(img)
+    plt.show()
+
+@vectorize(otypes=[float] * 5)
+def total_energy_density_and_pressure(n_n, with_muons=False):
+    if with_muons:
+        n_p_guess = solve_for_proton_number_density(n_n)
+        def equation(x):
+            [n_p, n_e] = x
+            mu_e = electron_chemical_potential(n_e)
+            return [
+                (mu_e
+                 + proton_chemical_potential(n_n, n_p)
+                 - neutron_chemical_potential(n_n, n_p)),
+                mu_e - muon_chemical_potential(n_p - n_e),
+            ]
+        result = scipy.optimize.root(equation, [n_p_guess*1.01, n_p_guess*.99])
+        if not result.success:
+            n_p = n_p_guess
+            n_e = n_p
+            n_mu = 0
+        else:
+            # note: the solution plot seem to be quite regular so
+            #       maybe we could solve it analytically instead?
+            #plot_muon_solutions(equation)
+            [n_p, n_e] = result.x
+            n_mu = n_p - n_e
+    else:
+        n_p  = solve_for_proton_number_density(n_n)
+        img = plot_map(figure, axes, f,
+                       xmin=N_EMPTY, xmax=n_n_max / N_0,
+                       ymin=N_EMPTY, ymax=n_p_max / N_0,
+                       cmap="afmhot", interpolation="none", vmax=1)
+
+        n_e  = n_p
+        n_mu = 0.
     epsilon_np = nucleon_energy_density(n_n, n_p)
     epsilon_e  = electron_energy_density(n_e)
-    epsilon    = epsilon_np + epsilon_e
-    mu_n = neutron_chemical_potential(n_n, n_p)
-    mu_p = proton_chemical_potential(n_n, n_p)
-    mu_e = electron_chemical_potential(n_e)
-    return (epsilon, mu_n * n_n + mu_p * n_p + mu_e * n_e - epsilon)
+    epsilon_mu = muon_energy_density(n_mu)
+    epsilon    = epsilon_np + epsilon_e #+ epsilon_mu
+    mu_p  = proton_chemical_potential(n_n, n_p)
+    mu_e  = electron_chemical_potential(n_e)
+    mu_mu = muon_chemical_potential(n_mu)
+    mu_n  = neutron_chemical_potential(n_n, n_p)
+    p = (mu_n  * n_n
+       + mu_p  * n_p
+       + mu_e  * n_e
+       + mu_mu * n_mu
+       - epsilon)
+    return n_p, n_e, n_mu, epsilon, p
 
 def beta_equilibrium_equation(n_n, n_p):
     return (electron_chemical_potential(n_p)
@@ -148,6 +198,7 @@ def beta_equilibrium_equation(n_n, n_p):
             - neutron_chemical_potential(n_n, n_p))
 
 def solve_for_proton_number_density(n_n):
+    '''Solve for proton number density assuming beta equilibrium (no muons).'''
     N_P_MIN = N_EMPTY
     N_P_MAX = .12 * N_0
     N_N_MAX = 3.9 * N_0
@@ -160,40 +211,45 @@ def solve_for_proton_number_density(n_n):
         return N_EMPTY
     return n_p
 
-def neutron_density_at_pressure(p, guess):
+def neutron_density_at_pressure(p, guess, with_muons=False):
     '''Find the neutron number density at the given pressure.'''
-    equation = lambda n_n: total_energy_density_and_pressure(n_n)[1] - p
+    def equation(n_n):
+        _, _, _, _, p2 = \
+            total_energy_density_and_pressure(n_n, with_muons=with_muons)
+        return p2 - p
     logging.info("solving for neutron number density at " +
                  "pressure = {0} / fm^3 ...".format(p))
-    n_n = solve_equation(equation, x0=guess)[0]
+    n_n = solve_equation(equation, x0=guess)
     logging.info("  neutron number density = {0} / fm^3".format(n_n))
     return n_n
 
-def neutron_density_at_zero_pressure():
+def neutron_density_at_zero_pressure(with_muons=False):
     '''Find the positive neutron number density at zero pressure.'''
     N_N_AT_P_ZERO_GUESS = .42
-    return neutron_density_at_pressure(0., N_N_AT_P_ZERO_GUESS)
+    return neutron_density_at_pressure(0., N_N_AT_P_ZERO_GUESS, with_muons=with_muons)
 
-def get_eos_table(n_n_begin, n_n_mid, n_n_end):
-    try:
-        return np.loadtxt("eos.txt").transpose() / HBAR_C
-    except IOError:
-        logging.info("regenerating EOS table ...")
-        pass
+def get_eos_table(n_n_begin, n_n_mid, n_n_end, with_muons=False):
     n_n = np.concatenate([
         np.linspace(n_n_begin, n_n_mid, 50),
         np.logspace(log10(n_n_mid), log10(n_n_end), 200),
     ])
-    epsilon, p = total_energy_density_and_pressure(n_n)
-    epsilon_p = np.array([epsilon, p]).transpose()
+    try:
+        epsilon_p = np.loadtxt("eos.txt") / HBAR_C
+        return np.concatenate([[n_n], epsilon_p.transpose()])
+    except IOError:
+        pass
+    logging.info("regenerating EOS table ...")
+    epsilon_p = total_energy_density_and_pressure(n_n, with_muons=with_muons)
+    epsilon_p = np.array(list(epsilon_p)).transpose()
     np.savetxt("eos.txt", epsilon_p * HBAR_C)
-    return epsilon_p.transpose()
+    return np.concatenate([[n_n], epsilon_p.transpose()])
 
 def interpolate_eos(epsilon, p):
     eos_raw = scipy.interpolate.interp1d(p, epsilon)
+    p_min = np.min(p)
     @np.vectorize
     def eos(p):
-        p = np.max([0., p]) / P_CONV
+        p = np.max([p_min, p]) / P_CONV
         try:
             epsilon = eos_raw(p) * P_CONV
             return epsilon
@@ -373,13 +429,16 @@ def main():
 
     plot_proton_number_density_solutions()
 
-    epsilon, p = get_eos_table(
-        n_n_begin=neutron_density_at_zero_pressure() - 1e-10,
+    with_muons = True
+    [n_n, n_p, n_e, n_mu, epsilon, p] = get_eos_table(
+        n_n_begin=1e-10 * N_0,
         n_n_mid=4 * N_0,
-        n_n_end=neutron_density_at_pressure(1e10, 1e3),
+        n_n_end=neutron_density_at_pressure(1e10, 1e3, with_muons=with_muons),
+        with_muons=with_muons,
     )
 
     eos = interpolate_eos(epsilon, p)
+    proton_fraction = scipy.interpolate.interp1d(p, 1 / (1 + n_n / n_p))
 
     fig, [ax1, ax2] = create_figure(1, 2)
     plot_eos(ax1, epsilon, p, eos)
@@ -404,6 +463,10 @@ def main():
         3,  # GeV/fm^3
     ) * GEV_FM3
     M, R = np.array([mass_radius(r, p0, eos) for p0 in p0s]).transpose()
+
+    p0 = p0s[abs(M - 1.4).argmin()]
+    print("proton fraction at core: {0}"
+          .format(proton_fraction(p0)))
 
     plot_mass_radius(R, M)
 

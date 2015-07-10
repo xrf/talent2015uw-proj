@@ -133,6 +133,17 @@ def neutron_chemical_potential(n_n, n_p):
 def vectorize(**kwargs):
     return lambda f: np.vectorize(f, **kwargs)
 
+def plot_muon_solutions(equation):
+    def f(n_p, n_e):
+        return sum(abs(equation([n_p * N_0, n_e * N_0])))
+    fig, [ax] = create_figure()
+    img = plot_map(fig, ax, f,
+                   xmin=N_EMPTY, xmax=40.,
+                   ymin=N_EMPTY, ymax=40.,
+                   cmap="afmhot", interpolation="none")
+    fig.colorbar(img)
+    plt.show()
+
 @vectorize(otypes=[float] * 5)
 def total_energy_density_and_pressure(n_n, with_muons=False):
     if with_muons:
@@ -146,16 +157,24 @@ def total_energy_density_and_pressure(n_n, with_muons=False):
                  - neutron_chemical_potential(n_n, n_p)),
                 mu_e - muon_chemical_potential(n_p - n_e),
             ]
-        print((n_p_guess, n_p_guess))
         result = scipy.optimize.root(equation, [n_p_guess*1.01, n_p_guess*.99])
         if not result.success:
-            raise Exception("solver failed")
-        [n_p, n_e] = result.x
-#        print(n_p, n_e)
-        n_mu = n_p - n_e
-#        exit()
+            n_p = n_p_guess
+            n_e = n_p
+            n_mu = 0
+        else:
+            # note: the solution plot seem to be quite regular so
+            #       maybe we could solve it analytically instead?
+            #plot_muon_solutions(equation)
+            [n_p, n_e] = result.x
+            n_mu = n_p - n_e
     else:
         n_p  = solve_for_proton_number_density(n_n)
+        img = plot_map(figure, axes, f,
+                       xmin=N_EMPTY, xmax=n_n_max / N_0,
+                       ymin=N_EMPTY, ymax=n_p_max / N_0,
+                       cmap="afmhot", interpolation="none", vmax=1)
+
         n_e  = n_p
         n_mu = 0.
     epsilon_np = nucleon_energy_density(n_n, n_p)
@@ -406,11 +425,11 @@ def main():
 
     # --- units: femtometers ---
 
-    #plot_beta_equilibrium_solutions(6*N_0, 6*N_0)
+    plot_beta_equilibrium_solutions(6*N_0, 6*N_0)
 
-    #plot_proton_number_density_solutions()
+    plot_proton_number_density_solutions()
 
-    with_muons = False
+    with_muons = True
     [n_n, n_p, n_e, n_mu, epsilon, p] = get_eos_table(
         n_n_begin=1e-10 * N_0,
         n_n_mid=4 * N_0,
